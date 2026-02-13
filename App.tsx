@@ -39,6 +39,9 @@ const ACCENT_COLORS = {
 const AVATARS = ['😊', '😎', '🤖', '🦊', '🐱', '🐶', '🦄', '🌈', '⚡', '✨'];
 const LOADING_MESSAGES = ["Fetching new text...", "AI is generating...", "Preparing your race...", "Syncing stats..."];
 
+const DEFAULT_PROFILE: UserProfile = { username: 'Guest Player', avatar: '😊', accentColor: 'indigo' };
+const DEFAULT_POMODORO: PomodoroSettings = { enabled: true, defaultMinutes: 25, size: 'medium' };
+
 const POWER_UP_REFS = {
   [PowerUpType.SKIP_WORD]: { label: 'SKIP', icon: '⏩', description: 'Skip current word' },
   [PowerUpType.TIME_FREEZE]: { label: 'FREEZE', icon: '❄️', description: 'Stop clock for 3s' },
@@ -65,7 +68,7 @@ const App: React.FC = () => {
       const saved = localStorage.getItem('user_profile');
       if (saved) return JSON.parse(saved);
     } catch (e) {}
-    return { username: 'Guest Player', avatar: '😊', accentColor: 'indigo' };
+    return { ...DEFAULT_PROFILE };
   });
 
   const [pomodoroSettings, setPomodoroSettings] = useState<PomodoroSettings>(() => {
@@ -73,7 +76,7 @@ const App: React.FC = () => {
       const saved = localStorage.getItem('pomodoro_settings');
       if (saved) return JSON.parse(saved);
     } catch (e) {}
-    return { enabled: true, defaultMinutes: 25, size: 'medium' };
+    return { ...DEFAULT_POMODORO };
   });
 
   const [provider, setProvider] = useState<AIProvider>(() => {
@@ -130,9 +133,8 @@ const App: React.FC = () => {
     localStorage.setItem('pomodoro_settings', JSON.stringify(pomodoroSettings));
   }, [pomodoroSettings]);
 
-  // Unified Sync Effect with Debouncing
   useEffect(() => {
-    if (user) {
+    if (user && !user.is_ip_persistent) {
       if (saveTimeoutRef.current) window.clearTimeout(saveTimeoutRef.current);
       
       setSaveStatus('saving');
@@ -158,32 +160,9 @@ const App: React.FC = () => {
       }, 1000);
     }
     
-    // Also save to localStorage as local backup
     localStorage.setItem('ai_provider', provider);
     localStorage.setItem('github_token', githubToken);
   }, [profile, pomodoroSettings, provider, githubToken, user, aiOpponentCount, aiOpponentDifficulty, calibratedKeys, keyMappings]);
-
-  // State reset function memoized to be safe for inclusion in useEffect
-  const resetGameStats = useCallback(() => {
-    setUserInput(""); setElapsedTime(0); setTimeLeft(60); setErrors(0); setTotalKeys(0);
-    setCorrectKeys(0); setStreak(0); setStartTime(null);
-    setPowerUps([]); setIsFrozen(false); setIsSlowed(false); setErrorMap({});
-    const pb = localStorage.getItem(`pb_${difficulty}_${gameMode}`);
-    
-    // Always use latest profile values here
-    const initialPlayers: PlayerState[] = [{ id: 'me', name: profile.username, index: 0, errors: 0, isBot: false, avatar: profile.avatar }];
-    if (pb) initialPlayers.push({ id: 'ghost', name: 'Personal Best', index: 0, errors: 0, isBot: false, isGhost: true, avatar: '👻' });
-    
-    if (gameMode === GameMode.COMPETITIVE) {
-      const bots = [{ name: 'Alex', avatar: '🤖' }, { name: 'Jordan', avatar: '😎' }, { name: 'Riley', avatar: '🦊' }, { name: 'Sam', avatar: '🤖' }, { name: 'Casey', avatar: '🤖' }];
-      for (let i = 0; i < aiOpponentCount; i++) {
-        initialPlayers.push({ id: `bot${i+1}`, name: bots[i % bots.length].name, avatar: bots[i % bots.length].avatar, index: 0, errors: 0, isBot: true });
-      }
-    } else if (gameMode !== GameMode.SOLO) {
-      initialPlayers.push({ id: 'bot1', name: 'Bot One', avatar: '🤖', isBot: true, index: 0, errors: 0 });
-    }
-    setPlayers(initialPlayers);
-  }, [profile, difficulty, gameMode, aiOpponentCount]);
 
   useEffect(() => {
     const initializeAuth = async () => {
@@ -215,6 +194,21 @@ const App: React.FC = () => {
             fetchHistory(newUser.id);
             setHasUsedSolo(null); 
           } else {
+            // CRITICAL: Reset to defaults when user is logged out
+            setProfile({ ...DEFAULT_PROFILE });
+            setPomodoroSettings({ ...DEFAULT_POMODORO });
+            setProvider(AIProvider.GEMINI);
+            setGithubToken('');
+            setAiOpponentCount(1);
+            setAiOpponentDifficulty(Difficulty.MEDIUM);
+            setCalibratedKeys(new Set());
+            setKeyMappings({});
+            
+            // Clear persistent profile from storage
+            localStorage.removeItem('user_profile');
+            localStorage.removeItem('github_token');
+            localStorage.removeItem('ai_provider');
+
             const used = await checkIpSoloUsage();
             setHasUsedSolo(used);
             setHistory([]);
@@ -232,7 +226,25 @@ const App: React.FC = () => {
     initializeAuth();
   }, []);
 
-  // Sync track name with profile when profile changes (without resetting the whole game)
+  const resetGameStats = useCallback(() => {
+    setUserInput(""); setElapsedTime(0); setTimeLeft(60); setErrors(0); setTotalKeys(0);
+    setCorrectKeys(0); setStreak(0); setStartTime(null);
+    setPowerUps([]); setIsFrozen(false); setIsSlowed(false); setErrorMap({});
+    const pb = localStorage.getItem(`pb_${difficulty}_${gameMode}`);
+    
+    const initialPlayers: PlayerState[] = [{ id: 'me', name: profile.username, index: 0, errors: 0, isBot: false, avatar: profile.avatar }];
+    if (pb) initialPlayers.push({ id: 'ghost', name: 'Personal Best', index: 0, errors: 0, isBot: false, isGhost: true, avatar: '👻' });
+    
+    if (gameMode === GameMode.COMPETITIVE) {
+      const bots = [{ name: 'Alex', avatar: '🤖' }, { name: 'Jordan', avatar: '😎' }, { name: 'Riley', avatar: '🦊' }];
+      bots.slice(0, aiOpponentCount).forEach((bot, i) => {
+        initialPlayers.push({ id: `bot-${i}`, name: bot.name, index: 0, errors: 0, isBot: true, avatar: bot.avatar });
+      });
+    }
+    setPlayers(initialPlayers);
+  }, [difficulty, gameMode, profile, aiOpponentCount]);
+
+  // Sync player marker on track whenever profile changes
   useEffect(() => {
     setPlayers(prev => prev.map(p => {
       if (p.id === 'me') {
@@ -242,58 +254,17 @@ const App: React.FC = () => {
     }));
   }, [profile.username, profile.avatar]);
 
-  useEffect(() => {
-    const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      if (isActive && !loading && !isTypingOut) {
-        if (e.key === '1' && powerUps[0]) { e.preventDefault(); usePowerUp(powerUps[0].type); return; }
-        if (e.key === '2' && powerUps[1]) { e.preventDefault(); usePowerUp(powerUps[1].type); return; }
-        if (e.key === '3' && powerUps[2]) { e.preventDefault(); usePowerUp(powerUps[2].type); return; }
-      }
-      const physicalKey = e.key.toLowerCase();
-      const logicalKey = keyMappings[physicalKey];
-      if (logicalKey && isActive && document.activeElement === inputRef.current) {
-        e.preventDefault();
-        if (logicalKey === 'backspace') {
-          handleInputChange({ target: { value: userInput.slice(0, -1) } } as any);
-        } else if (logicalKey.length === 1) {
-          handleInputChange({ target: { value: userInput + logicalKey } } as any);
-        }
-      }
-    };
-    window.addEventListener('keydown', handleGlobalKeyDown);
-    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [isActive, powerUps, keyMappings, userInput, loading, isTypingOut]);
-
-  const currentWpm = useMemo(() => {
+  // Fix: Defined currentWpmDisplay and currentAccuracyDisplay before completeRace usage
+  const currentWpmDisplay = useMemo(() => {
     if (elapsedTime <= 0) return 0;
     const typedLength = gameMode === GameMode.TIME_ATTACK ? correctKeys : userInput.length;
     return Math.round((typedLength / 5) / (elapsedTime / 60));
   }, [elapsedTime, userInput.length, correctKeys, gameMode]);
 
-  const currentAccuracy = totalKeys > 0 ? Math.round(((totalKeys - errors) / totalKeys) * 100) : 100;
-  const isOverdrive = streak >= 20 || currentWpm >= 90;
+  const currentAccuracyDisplay = totalKeys > 0 ? Math.round(((totalKeys - errors) / totalKeys) * 100) : 100;
 
-  const playSound = (type: 'correct' | 'error' | 'finish' | 'click') => {
-    if (!soundEnabled) return;
-    try {
-      if (!audioCtx.current) audioCtx.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const ctx = audioCtx.current;
-      if (ctx.state === 'suspended') ctx.resume();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain); gain.connect(ctx.destination);
-      const now = ctx.currentTime;
-      if (type === 'click') { osc.frequency.setValueAtTime(150, now); gain.gain.setValueAtTime(0.05, now); gain.gain.exponentialRampToValueAtTime(0.001, now + 0.05); osc.start(now); osc.stop(now + 0.05); }
-      else if (type === 'correct') { osc.frequency.setValueAtTime(800, now); gain.gain.setValueAtTime(0.03, now); gain.gain.exponentialRampToValueAtTime(0.001, now + 0.05); osc.start(now); osc.stop(now + 0.05); }
-      else if (type === 'error') { osc.type = 'square'; osc.frequency.setValueAtTime(100, now); gain.gain.setValueAtTime(0.08, now); gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1); osc.start(now); osc.stop(now + 0.1); }
-      else if (type === 'finish') { osc.type = 'triangle'; osc.frequency.setValueAtTime(440, now); osc.frequency.exponentialRampToValueAtTime(880, now + 0.3); gain.gain.setValueAtTime(0.1, now); gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4); osc.start(now); osc.stop(now + 0.4); }
-    } catch {}
-  };
-
-  const fetchHistory = async (uid: string) => {
-    const { data } = await supabase.from('history').select('*').eq('user_id', uid).order('date', { ascending: false });
-    if (data) setHistory(data);
-  };
+  // Fix: Defined isOverdrive based on typing streak
+  const isOverdrive = streak >= 10;
 
   useEffect(() => {
     if (isActive && startTime && !loading && !isTypingOut) {
@@ -315,7 +286,7 @@ const App: React.FC = () => {
                 case Difficulty.PRO: baseSpeed = 0.85; break;
                 case Difficulty.INSANE: baseSpeed = 1.10; break;
               }
-              moveChance = baseSpeed * speedMult * (p.id.includes('bot') ? (1 + (parseInt(p.id.slice(-1)) * 0.03)) : 1); 
+              moveChance = baseSpeed * speedMult * (p.id.includes('bot') ? (1 + (parseInt(p.id.slice(-4)) * 0.03)) : 1); 
             }
             return { ...p, index: Math.min(p.index + (Math.random() < moveChance ? 1 : 0), currentText.length) };
           }));
@@ -365,8 +336,6 @@ const App: React.FC = () => {
     }
   };
 
-  useEffect(() => { resetGameStats(); }, [resetGameStats]);
-
   const startGame = async () => {
     if (!user) {
       const used = await checkIpSoloUsage();
@@ -403,10 +372,11 @@ const App: React.FC = () => {
     }
   };
 
+  // Fix: Used currentWpmDisplay and currentAccuracyDisplay in completeRace instead of undefined currentWpm/currentAccuracy
   const completeRace = async () => {
     setIsActive(false); playSound('finish');
     const duration = gameMode === GameMode.TIME_ATTACK ? 60 : elapsedTime;
-    const wpm = currentWpm; const accuracy = currentAccuracy;
+    const wpm = currentWpmDisplay; const accuracy = currentAccuracyDisplay;
     if (user) {
       const pbKey = `pb_${difficulty}_${gameMode}`;
       const currentPb = parseInt(localStorage.getItem(pbKey) || '0');
@@ -466,12 +436,33 @@ const App: React.FC = () => {
     setCurrentView(targetView);
   };
 
+  const playSound = (type: 'correct' | 'error' | 'finish' | 'click') => {
+    if (!soundEnabled) return;
+    try {
+      if (!audioCtx.current) audioCtx.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const ctx = audioCtx.current;
+      if (ctx.state === 'suspended') ctx.resume();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain); gain.connect(ctx.destination);
+      const now = ctx.currentTime;
+      if (type === 'click') { osc.frequency.setValueAtTime(150, now); gain.gain.setValueAtTime(0.05, now); gain.gain.exponentialRampToValueAtTime(0.001, now + 0.05); osc.start(now); osc.stop(now + 0.05); }
+      else if (type === 'correct') { osc.frequency.setValueAtTime(800, now); gain.gain.setValueAtTime(0.03, now); gain.gain.exponentialRampToValueAtTime(0.001, now + 0.05); osc.start(now); osc.stop(now + 0.05); }
+      else if (type === 'error') { osc.type = 'square'; osc.frequency.setValueAtTime(100, now); gain.gain.setValueAtTime(0.08, now); gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1); osc.start(now); osc.stop(now + 0.1); }
+      else if (type === 'finish') { osc.type = 'triangle'; osc.frequency.setValueAtTime(440, now); osc.frequency.exponentialRampToValueAtTime(880, now + 0.3); gain.gain.setValueAtTime(0.1, now); gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4); osc.start(now); osc.stop(now + 0.4); }
+    } catch {}
+  };
+
+  const fetchHistory = async (uid: string) => {
+    const { data } = await supabase.from('history').select('*').eq('user_id', uid).order('date', { ascending: false });
+    if (data) setHistory(data);
+  };
+
   return (
     <div className={`min-h-screen p-4 md:p-6 flex flex-col items-center transition-all duration-700`}>
       {showAuth && <Auth onClose={() => setShowAuth(false)} />}
       {user && pomodoroSettings.enabled && <PomodoroTimer settings={pomodoroSettings} />}
       
-      {/* Gemini Error Modal */}
       {showGeminiError && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-slate-950/85 backdrop-blur-md animate-in fade-in duration-300">
            <div className="glass border border-white/10 w-full max-w-sm rounded-[2rem] p-8 shadow-3xl text-center space-y-6">
@@ -547,7 +538,6 @@ const App: React.FC = () => {
             <div className="glass rounded-[2rem] p-10 border border-white/10 shadow-2xl"><KeyboardTester testedKeys={calibratedKeys} onTestedKeysChange={setCalibratedKeys} mappings={keyMappings} onMappingChange={setKeyMappings} /></div>
             
             <div className="glass rounded-[2rem] p-10 space-y-10 border border-white/10 shadow-2xl relative">
-               {/* Save Status Floating Indicator */}
                {saveStatus !== 'idle' && (
                   <div className={`absolute top-10 right-10 flex items-center gap-2 px-3 py-1.5 rounded-full text-[8px] font-black uppercase tracking-widest animate-in fade-in slide-in-from-right-2
                     ${saveStatus === 'saving' ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20' : 
@@ -700,8 +690,8 @@ const App: React.FC = () => {
 
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
                 <div className="glass p-4 rounded-2xl border border-white/10 flex flex-col justify-center relative shadow-md"><p className="text-slate-500 text-[8px] font-black uppercase tracking-[0.3em] mb-1 leading-none">Timer</p><div className="flex items-center gap-2"><Clock size={16} style={{ color: isFrozen ? '#60a5fa' : 'rgb(var(--accent-primary))' }} className={isFrozen ? 'animate-pulse' : ''} /><p className={`text-base font-black text-white font-mono tracking-tighter leading-none ${isFrozen ? 'text-blue-400' : ''}`}>{gameMode === GameMode.TIME_ATTACK ? formattedTime(timeLeft) : formattedTime(elapsedTime)}</p></div></div>
-                <StatsCard label="Speed" value={`${currentWpm} WPM`} icon={<Zap />} color={profile.accentColor} />
-                <StatsCard label="Precision" value={`${currentAccuracy}%`} icon={<Target />} color="emerald" />
+                <StatsCard label="Speed" value={`${currentWpmDisplay} WPM`} icon={<Zap />} color={profile.accentColor} />
+                <StatsCard label="Precision" value={`${currentAccuracyDisplay}%`} icon={<Target />} color="emerald" />
                 <div className="glass p-4 rounded-2xl border border-white/10 flex flex-col justify-center shadow-md"><p className="text-slate-500 text-[8px] font-black uppercase tracking-[0.3em] mb-1 leading-none">Abilities</p><div className="flex gap-3 min-h-[32px]">{powerUps.map((p, i) => (<button key={p.id} onClick={() => usePowerUp(p.type)} className="w-8 h-8 group relative flex items-center justify-center bg-white/5 hover:bg-white/10 rounded-lg text-lg transition-all border border-white/10 shadow-lg active:scale-90">{p.icon}<div className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-indigo-600 rounded-full flex items-center justify-center text-[7px] font-black text-white shadow-lg ring-1 ring-slate-900">{i + 1}</div></button>))}{powerUps.length === 0 && <span className="text-[9px] font-black text-slate-700 uppercase tracking-widest leading-[32px]">None</span>}</div></div>
               </div>
 
