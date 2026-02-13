@@ -15,16 +15,21 @@ export const fetchTypingText = async (difficulty: Difficulty, category: string =
   Return ONLY the sentence text, no quotes, no labels, and no surrounding whitespace.`;
 
   try {
-    // Create a new instance right before the call to pick up the current API key
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: prompt,
     });
-    return response.text?.trim() || "Technology and curiosity drive human progress across all fields of study.";
+    
+    if (!response || !response.text) {
+      throw new Error("Empty response from Gemini Core.");
+    }
+    
+    return response.text.trim();
   } catch (error) {
-    console.error("Failed to fetch AI text:", error);
-    return "The quick brown fox jumps over the lazy dog in a display of classic typing practice.";
+    console.error("Gemini Core Error:", error);
+    // Let the component handle the error to show the fallback modal
+    throw error;
   }
 };
 
@@ -35,7 +40,6 @@ export const fetchCoachNote = async (wpm: number, accuracy: number, errors: numb
   Provide a single, insightful, motivating sentence of feedback (max 20 words).`;
 
   try {
-    // Create a new instance right before the call to pick up the current API key
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
