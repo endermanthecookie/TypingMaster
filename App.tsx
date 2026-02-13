@@ -3,7 +3,8 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   Trophy, Zap, Target, RotateCcw, Play, Rocket, Settings as SettingsIcon,
   Gamepad2, LogOut, X, Volume2, VolumeX, Github, Globe, User, EyeOff, Eye, 
-  Activity, Dna, Clock, Lock, ShieldAlert, AlertCircle, Timer, Download, Upload, FileJson
+  Activity, Dna, Clock, Lock, ShieldAlert, AlertCircle, Timer, Download, Upload, FileJson,
+  BookOpen, ChevronRight, Sparkles
 } from 'lucide-react';
 import { Difficulty, GameMode, TypingResult, PlayerState, PowerUp, PowerUpType, AppView, AIProvider, UserProfile, UserPreferences, PomodoroSettings } from './types';
 import { fetchTypingText } from './services/geminiService';
@@ -17,6 +18,7 @@ import KeyboardTester from './components/KeyboardTester';
 import TypingGuide from './components/TypingGuide';
 import Auth from './components/Auth';
 import PomodoroTimer from './components/PomodoroTimer';
+import Tutorials from './components/Tutorials';
 
 const RGB_MAP = {
   indigo: '99, 102, 241',
@@ -488,6 +490,7 @@ const App: React.FC = () => {
           <nav className="flex items-center gap-4">
             <div className="flex bg-black/50 p-1.5 rounded-2xl border border-white/5 shadow-lg">
               <button onClick={() => setCurrentView(AppView.GAME)} className={`p-3 rounded-xl transition-all ${currentView === AppView.GAME ? `bg-indigo-600 text-white shadow-lg` : 'text-slate-500 hover:text-white'}`} title="Game Home"><Gamepad2 size={20} /></button>
+              <button onClick={() => setCurrentView(AppView.TUTORIALS)} className={`p-3 rounded-xl transition-all ${currentView === AppView.TUTORIALS ? `bg-amber-600 text-white shadow-lg` : 'text-slate-500 hover:text-white'}`} title="Tactical Academy"><BookOpen size={20} /></button>
               <button onClick={() => checkRestricted(AppView.PROFILE)} className={`p-3 rounded-xl transition-all relative ${currentView === AppView.PROFILE ? `bg-emerald-600 text-white shadow-lg` : 'text-slate-500 hover:text-white'}`} title="Profile">
                 <User size={20} />
                 {!user && <div className="absolute top-1 right-1 bg-slate-900/80 rounded-full p-0.5"><Lock size={10} className="text-slate-400" /></div>}
@@ -576,6 +579,8 @@ const App: React.FC = () => {
               </div>
             </div>
           </div>
+        ) : currentView === AppView.TUTORIALS ? (
+          <Tutorials />
         ) : (
           <>
             <div className="flex flex-wrap gap-4 justify-center">
@@ -592,13 +597,54 @@ const App: React.FC = () => {
             <main className={`relative transition-all duration-700 glass rounded-[2.5rem] p-10 md:p-12 border overflow-hidden shadow-2xl ${isOverdrive ? 'overdrive-glow border-indigo-500/40 scale-[1.004]' : 'border-white/10'}`}>
               <div className="scanline" />
               {!isZen && (
-                <div className="mb-8 space-y-2">
-                  {players.map(p => (
-                    <div key={p.id} className="progress-lane relative h-12 rounded-xl overflow-hidden group shadow-inner border border-white/5">
-                      <div className={`absolute inset-y-0 left-0 transition-all duration-300 ${p.isGhost ? 'bg-white/5 border-r border-white/10' : p.id === 'me' ? `bg-gradient-to-r ${ACCENT_COLORS[profile.accentColor as keyof typeof ACCENT_COLORS]} opacity-25 border-r border-white/20` : 'bg-slate-500/5 border-r border-slate-500/10'}`} style={{ width: `${(p.index / Math.max(currentText.length, 1)) * 100}%` }} />
-                      <div className="absolute top-1/2 -translate-y-1/2 transition-all duration-300 flex items-center gap-4 px-8 whitespace-nowrap" style={{ left: `${Math.min((p.index / Math.max(currentText.length, 1)) * 100, 95)}%` }}><span className="text-2xl drop-shadow-lg">{p.avatar}</span><span className={`text-[8px] font-black uppercase tracking-[0.3em] ${p.id === 'me' ? 'text-white' : 'text-slate-600'}`}>{p.name}</span></div>
-                    </div>
-                  ))}
+                <div className="mb-10 space-y-4 relative">
+                  <div className="absolute -left-6 inset-y-0 w-1 bg-gradient-to-b from-transparent via-indigo-500/20 to-transparent rounded-full" />
+                  {players.map(p => {
+                    const progress = (p.index / Math.max(currentText.length, 1)) * 100;
+                    const isWinning = players.every(other => other.id === p.id || p.index >= other.index);
+                    return (
+                      <div key={p.id} className="relative h-14 bg-slate-950/40 rounded-2xl border border-white/5 overflow-hidden group shadow-[inset_0_2px_10px_rgba(0,0,0,0.4)]">
+                        {/* Track Surface Effect */}
+                        <div className="absolute inset-0 opacity-[0.03] pointer-events-none" style={{ backgroundImage: 'linear-gradient(90deg, #fff 1px, transparent 1px)', backgroundSize: '40px 100%' }} />
+                        
+                        {/* Progress Bar with Glow */}
+                        <div 
+                          className={`absolute inset-y-0 left-0 transition-all duration-500 ease-out flex items-center justify-end
+                            ${p.isGhost ? 'bg-white/5 border-r border-white/20 shadow-[0_0_15px_rgba(255,255,255,0.1)]' : 
+                              p.id === 'me' ? `bg-gradient-to-r ${ACCENT_COLORS[profile.accentColor as keyof typeof ACCENT_COLORS]} opacity-30 border-r-2 border-white shadow-[0_0_20px_var(--accent-glow)]` : 
+                              'bg-indigo-500/10 border-r border-indigo-500/20'}`} 
+                          style={{ width: `${progress}%` }}
+                        >
+                          {p.id === 'me' && isOverdrive && (
+                             <div className="h-full w-24 bg-gradient-to-l from-white/20 to-transparent animate-pulse" />
+                          )}
+                        </div>
+
+                        {/* Player Content */}
+                        <div className="absolute top-1/2 -translate-y-1/2 transition-all duration-500 ease-out flex items-center gap-4 px-6" style={{ left: `${Math.min(progress, 90)}%` }}>
+                          <div className={`relative flex items-center justify-center w-10 h-10 rounded-xl bg-slate-900 border transition-all duration-300 ${p.id === 'me' ? 'scale-110 border-white/20 shadow-xl' : 'border-white/5'}`}>
+                            <span className="text-xl drop-shadow-md">{p.avatar}</span>
+                            {p.id === 'me' && isOverdrive && <Sparkles className="absolute -top-1 -right-1 text-amber-400 animate-bounce" size={14} />}
+                            {isWinning && p.index > 10 && <Trophy className="absolute -bottom-1 -right-1 text-amber-500" size={12} />}
+                          </div>
+                          <div className="flex flex-col">
+                            <span className={`text-[8px] font-black uppercase tracking-[0.2em] ${p.id === 'me' ? 'text-white' : 'text-slate-500'}`}>{p.name}</span>
+                            <div className="flex items-center gap-1.5">
+                              <div className="h-1 w-12 bg-white/5 rounded-full overflow-hidden">
+                                <div className="h-full bg-white/20" style={{ width: `${progress}%` }} />
+                              </div>
+                              <span className="text-[7px] font-bold text-slate-600">{Math.floor(progress)}%</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Finish Line Indicator */}
+                        <div className="absolute right-0 inset-y-0 w-8 border-l border-white/5 bg-black/20 flex items-center justify-center">
+                          <div className="w-1 h-1/2 bg-white/5 rounded-full" />
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
 
@@ -609,7 +655,7 @@ const App: React.FC = () => {
                 <div className="glass p-4 rounded-2xl border border-white/10 flex flex-col justify-center shadow-md"><p className="text-slate-500 text-[8px] font-black uppercase tracking-[0.3em] mb-1 leading-none">Abilities</p><div className="flex gap-3 min-h-[32px]">{powerUps.map((p, i) => (<button key={p.id} onClick={() => usePowerUp(p.type)} className="w-8 h-8 group relative flex items-center justify-center bg-white/5 hover:bg-white/10 rounded-lg text-lg transition-all border border-white/10 shadow-lg active:scale-90">{p.icon}<div className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-indigo-600 rounded-full flex items-center justify-center text-[7px] font-black text-white shadow-lg ring-1 ring-slate-900">{i + 1}</div></button>))}{powerUps.length === 0 && <span className="text-[9px] font-black text-slate-700 uppercase tracking-widest leading-[32px]">None</span>}</div></div>
               </div>
 
-              <div className="relative group">
+              <div className="relative group mb-10">
                 <div className={`glass rounded-[2rem] p-10 min-h-[220px] flex items-center justify-center text-base md:text-xl font-mono leading-relaxed select-none transition-all duration-700 shadow-[inset_0_2px_15px_rgba(0,0,0,0.5)] ${isOverdrive ? 'ring-2 ring-indigo-500/30' : 'border border-white/10'}`}>
                   {loading ? (
                     <div className="flex flex-col items-center gap-6 py-4">
@@ -630,7 +676,14 @@ const App: React.FC = () => {
                       {!user && hasUsedSolo && gameMode === GameMode.SOLO ? (
                          <p className="text-rose-500 uppercase text-[10px] font-black tracking-[0.5em] animate-pulse text-center leading-relaxed">Solo limit reached.<br/>Please log in to continue.</p>
                       ) : (
-                        <p className="text-slate-600 italic uppercase text-[10px] tracking-[0.4em]">Press Execute to Start Race</p>
+                        <div className="flex flex-col items-center gap-4">
+                          <p className="text-slate-600 italic uppercase text-[10px] tracking-[0.4em]">Press Execute to Start Race</p>
+                          <div className="flex gap-2">
+                             {[Difficulty.EASY, Difficulty.MEDIUM, Difficulty.HARD].map(d => (
+                               <button key={d} onClick={() => setDifficulty(d)} className={`px-3 py-1 rounded-full text-[7px] font-black uppercase tracking-widest border transition-all ${difficulty === d ? 'bg-white/10 border-white/20 text-white' : 'border-white/5 text-slate-700'}`}>{d}</button>
+                             ))}
+                          </div>
+                        </div>
                       )}
                     </div>
                   ) : isTypingOut ? (
@@ -647,7 +700,13 @@ const App: React.FC = () => {
                 <input ref={inputRef} value={userInput} onChange={handleInputChange} disabled={!isActive || loading || isTypingOut} className="absolute inset-0 opacity-0 cursor-default" autoFocus />
               </div>
 
-              <div className="mt-10 flex flex-col items-center">
+              {showGuide && isActive && !loading && !isTypingOut && (
+                <div className="mb-10">
+                   <TypingGuide nextChar={currentText[userInput.length]} accentColor={profile.accentColor} />
+                </div>
+              )}
+
+              <div className="mt-4 flex flex-col items-center">
                 <button 
                   onClick={isActive ? () => setIsActive(false) : startGame} 
                   className={`group relative px-10 py-4 rounded-[1.25rem] font-black uppercase tracking-[0.3em] text-[10px] transition-all shadow-2xl overflow-hidden hover:scale-105 active:scale-95 ${isActive ? 'bg-white/5 text-slate-500 border border-white/10' : `text-white bg-gradient-to-r ${ACCENT_COLORS[profile.accentColor as keyof typeof ACCENT_COLORS]}`}`}>
@@ -703,7 +762,7 @@ const App: React.FC = () => {
           </>
         )}
       </div>
-      <footer className="mt-16 text-slate-800 text-[9px] font-black uppercase tracking-[0.6em] opacity-40 pb-12 text-center">ZippyType v3.7 • Professional Edition</footer>
+      <footer className="mt-16 text-slate-800 text-[9px] font-black uppercase tracking-[0.6em] opacity-40 pb-12 text-center">ZippyType v3.8 • Tactical Academy Edition</footer>
     </div>
   );
 };

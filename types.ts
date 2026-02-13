@@ -28,7 +28,8 @@ export enum PowerUpType {
 export enum AppView {
   GAME = 'game',
   SETTINGS = 'settings',
-  PROFILE = 'profile'
+  PROFILE = 'profile',
+  TUTORIALS = 'tutorials'
 }
 
 export interface UserProfile {
