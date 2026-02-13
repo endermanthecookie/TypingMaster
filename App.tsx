@@ -3,13 +3,14 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   Trophy, Zap, Target, RotateCcw, Play, Rocket, Settings as SettingsIcon,
   Gamepad2, LogOut, X, Volume2, VolumeX, Github, Globe, User, EyeOff, Eye, 
-  Activity, Dna, Clock, Lock, ShieldAlert, AlertCircle, Timer
+  Activity, Dna, Clock, Lock, ShieldAlert, AlertCircle, Timer, Download, Upload, FileJson
 } from 'lucide-react';
 import { Difficulty, GameMode, TypingResult, PlayerState, PowerUp, PowerUpType, AppView, AIProvider, UserProfile, UserPreferences, PomodoroSettings } from './types';
 import { fetchTypingText } from './services/geminiService';
 import { fetchGithubTypingText } from './services/githubService';
 import { getCoachReport } from './services/coachService';
 import { supabase, saveUserPreferences, loadUserPreferences, checkIpSoloUsage, recordIpSoloUsage, getUserIdByIp } from './services/supabaseService';
+import { saveZippyData, loadZippyData, ZippyStats } from './services/storageService';
 import StatsCard from './components/StatsCard';
 import HistoryChart from './components/HistoryChart';
 import KeyboardTester from './components/KeyboardTester';
@@ -55,17 +56,31 @@ const App: React.FC = () => {
   const [hasUsedSolo, setHasUsedSolo] = useState<boolean | null>(null); // null means checking
   
   const [profile, setProfile] = useState<UserProfile>(() => {
-    const saved = localStorage.getItem('user_profile');
-    return saved ? JSON.parse(saved) : { username: 'Guest Player', avatar: '😊', accentColor: 'indigo' };
+    try {
+      const saved = localStorage.getItem('user_profile');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {
+      console.error("Profile recovery failed, resetting to default.", e);
+    }
+    return { username: 'Guest Player', avatar: '😊', accentColor: 'indigo' };
   });
 
   const [pomodoroSettings, setPomodoroSettings] = useState<PomodoroSettings>(() => {
-    const saved = localStorage.getItem('pomodoro_settings');
-    return saved ? JSON.parse(saved) : { enabled: true, defaultMinutes: 25, size: 'medium' };
+    try {
+      const saved = localStorage.getItem('pomodoro_settings');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {
+      console.error("Pomodoro settings corrupted, resetting.", e);
+    }
+    return { enabled: true, defaultMinutes: 25, size: 'medium' };
   });
 
-  const [provider, setProvider] = useState<AIProvider>(() => (localStorage.getItem('ai_provider') as AIProvider) || AIProvider.GEMINI);
-  const [githubToken, setGithubToken] = useState(localStorage.getItem('github_token') || '');
+  const [provider, setProvider] = useState<AIProvider>(() => {
+    const saved = localStorage.getItem('ai_provider');
+    return (saved as AIProvider) || AIProvider.GEMINI;
+  });
+
+  const [githubToken, setGithubToken] = useState(() => localStorage.getItem('github_token') || '');
   const [aiOpponentCount, setAiOpponentCount] = useState(1);
   const [aiOpponentDifficulty, setAiOpponentDifficulty] = useState<Difficulty>(Difficulty.MEDIUM);
   const [calibratedKeys, setCalibratedKeys] = useState<Set<string>>(new Set());
@@ -125,55 +140,55 @@ const App: React.FC = () => {
         calibrated_keys: Array.from(calibratedKeys),
         key_mappings: keyMappings
       };
-      saveUserPreferences(user.id, prefs);
+      saveUserPreferences(user.id, prefs).catch(err => console.error("Cloud save failed:", err));
     }
   }, [profile, pomodoroSettings, provider, githubToken, user, aiOpponentCount, aiOpponentDifficulty, calibratedKeys, keyMappings]);
 
   useEffect(() => {
     const initializeAuth = async () => {
-      console.log("Initializing auth system...");
-      const { data: { session } } = await supabase.auth.getSession();
-      let currentUser = session?.user ?? null;
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        let currentUser = session?.user ?? null;
 
-      if (!currentUser) {
-        const ipUserId = await getUserIdByIp();
-        if (ipUserId) {
-          console.log("Found IP-linked user session:", ipUserId);
-          currentUser = { id: ipUserId, is_ip_persistent: true } as any;
-        }
-      }
-
-      const handleAuthUpdate = async (newUser: any) => {
-        setUser(newUser);
-        if (newUser) {
-          console.log("User authenticated. Loading cloud preferences...");
-          const prefs = await loadUserPreferences(newUser.id);
-          if (prefs) {
-            setProvider(prefs.ai_provider);
-            setGithubToken(prefs.github_token);
-            setProfile(prefs.user_profile);
-            setPomodoroSettings(prefs.pomodoro_settings || { enabled: true, defaultMinutes: 25, size: 'medium' });
-            setAiOpponentCount(prefs.ai_opponent_count);
-            setAiOpponentDifficulty(prefs.ai_opponent_difficulty);
-            setCalibratedKeys(new Set(prefs.calibrated_keys));
-            setKeyMappings(prefs.key_mappings || {});
+        if (!currentUser) {
+          const ipUserId = await getUserIdByIp();
+          if (ipUserId) {
+            currentUser = { id: ipUserId, is_ip_persistent: true } as any;
           }
-          fetchHistory(newUser.id);
-          setHasUsedSolo(null); 
-        } else {
-          console.log("Checking solo run limit in persistent storage...");
-          const used = await checkIpSoloUsage();
-          setHasUsedSolo(used);
-          setHistory([]);
-          setCurrentView(AppView.GAME);
         }
-      };
 
-      await handleAuthUpdate(currentUser);
-      const { data: { subscription } } = supabase.auth.onAuthStateChange((_, session) => {
-        handleAuthUpdate(session?.user ?? null);
-      });
-      return () => subscription.unsubscribe();
+        const handleAuthUpdate = async (newUser: any) => {
+          setUser(newUser);
+          if (newUser) {
+            const prefs = await loadUserPreferences(newUser.id);
+            if (prefs) {
+              setProvider(prefs.ai_provider);
+              setGithubToken(prefs.github_token);
+              setProfile(prefs.user_profile);
+              setPomodoroSettings(prefs.pomodoro_settings || { enabled: true, defaultMinutes: 25, size: 'medium' });
+              setAiOpponentCount(prefs.ai_opponent_count);
+              setAiOpponentDifficulty(prefs.ai_opponent_difficulty);
+              setCalibratedKeys(new Set(prefs.calibrated_keys));
+              setKeyMappings(prefs.key_mappings || {});
+            }
+            fetchHistory(newUser.id);
+            setHasUsedSolo(null); 
+          } else {
+            const used = await checkIpSoloUsage();
+            setHasUsedSolo(used);
+            setHistory([]);
+            setCurrentView(AppView.GAME);
+          }
+        };
+
+        await handleAuthUpdate(currentUser);
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((_, session) => {
+          handleAuthUpdate(session?.user ?? null);
+        });
+        return () => subscription.unsubscribe();
+      } catch (err) {
+        console.error("Auth initialization failed:", err);
+      }
     };
     initializeAuth();
   }, []);
@@ -271,7 +286,6 @@ const App: React.FC = () => {
   };
 
   const loadNewText = async (customDiff?: Difficulty) => {
-    console.log("Loading AI text content...");
     setLoading(true); const rid = ++requestCounter.current;
     try {
       let text = "";
@@ -281,9 +295,8 @@ const App: React.FC = () => {
       if (rid !== requestCounter.current) return;
       const cleaned = normalizeText(text.trim());
       setCurrentText(cleaned); setLoading(false); runTypewriter(cleaned);
-      console.log("AI content loaded successfully.");
     } catch (e: any) {
-      console.error("Critical: AI text generation failed.", e);
+      console.error("AI text generation failed.", e);
       if (rid !== requestCounter.current) return;
       setLoading(false); setCurrentText("Failed to load AI text. Please check your connection.");
     }
@@ -317,12 +330,9 @@ const App: React.FC = () => {
   useEffect(() => { resetGameStats(); }, []);
 
   const startGame = async () => {
-    console.log("Initiating race sequence...");
     if (!user) {
-      console.log("Verifying IP solo run quota...");
       const used = await checkIpSoloUsage();
       if (used) {
-        console.warn("Solo run limit strictly enforced for current IP. Request denied.");
         setHasUsedSolo(true);
         setShowRestrictedModal(true);
         return;
@@ -364,7 +374,6 @@ const App: React.FC = () => {
   };
 
   const completeRace = async () => {
-    console.log("Race protocol complete. Finalizing data...");
     setIsActive(false); playSound('finish');
     const duration = gameMode === GameMode.TIME_ATTACK ? 60 : elapsedTime;
     const wpm = currentWpm; const accuracy = currentAccuracy;
@@ -378,9 +387,6 @@ const App: React.FC = () => {
       setHistory(prev => [result, ...prev].slice(0, 50));
     } else if (gameMode === GameMode.SOLO) {
       try {
-        const ipRes = await fetch('https://api.ipify.org?format=json');
-        const { ip } = await ipRes.json();
-        console.log("DEBUG: Logging solo race completion for IP address:", ip);
         await recordIpSoloUsage();
         setHasUsedSolo(true);
       } catch (err) {
@@ -404,6 +410,40 @@ const App: React.FC = () => {
       const nt = currentText.substring(0, Math.min(userInput.length + skip, currentText.length)); setUserInput(nt); setPlayers(ps => ps.map(p => { if (p.id === 'me') return {...p, index: nt.length}; return p; }));
     } else if (type === PowerUpType.TIME_FREEZE) { setIsFrozen(true); setTimeout(() => setIsFrozen(false), 3000); }
     else if (type === PowerUpType.SLOW_OPPONENTS) { setIsSlowed(true); setTimeout(() => setIsSlowed(false), 5000); }
+  };
+
+  const handleExport = () => {
+    const maxWpm = history.length > 0 ? Math.max(...history.map(h => h.wpm)) : 0;
+    const avgAcc = history.length > 0 ? history.reduce((acc, curr) => acc + curr.accuracy, 0) / history.length : 100;
+    const totalKeys = history.reduce((acc, curr) => acc + (curr.textLength || 0), 0);
+    
+    const stats: ZippyStats = {
+      level: Math.floor(totalKeys / 1000) + 1,
+      topWPM: maxWpm,
+      accuracy: avgAcc,
+      totalKeystrokes: totalKeys,
+      problemKeys: Object.keys(errorMap).slice(0, 10)
+    };
+    
+    const blob = saveZippyData(stats);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `zippy_save_${new Date().toISOString().split('T')[0]}.ztx`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    try {
+      const stats = await loadZippyData(file);
+      alert(`Import Successful!\nLevel: ${stats.level}\nTop WPM: ${stats.topWPM.toFixed(1)}\nAccuracy: ${stats.accuracy.toFixed(1)}%`);
+    } catch (err: any) {
+      alert(`Import Failed: ${err.message}`);
+    }
   };
 
   const formattedTime = (time: number) => { const mins = Math.floor(time / 60); const secs = (time % 60).toFixed(1); return `${mins}:${secs.padStart(4, '0')}`; };
@@ -477,6 +517,32 @@ const App: React.FC = () => {
           <div className="space-y-8 animate-in zoom-in-95 duration-300">
             <div className="glass rounded-[2rem] p-10 border border-white/10 shadow-2xl"><KeyboardTester testedKeys={calibratedKeys} onTestedKeysChange={setCalibratedKeys} mappings={keyMappings} onMappingChange={setKeyMappings} /></div>
             
+            <div className="glass rounded-[2rem] p-10 space-y-10 border border-white/10 shadow-2xl">
+               <div className="flex items-center gap-3"><div className="p-2.5 bg-rose-500/10 text-rose-400 rounded-xl border border-rose-500/20"><FileJson size={22} /></div><h2 className="text-base font-black text-white uppercase tracking-tighter">Data Management</h2></div>
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+                  <div className="space-y-4">
+                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest leading-relaxed">
+                      Securely backup your progress using the high-performance ZippyType Protocol (.ztx).
+                    </p>
+                    <button 
+                      onClick={handleExport}
+                      className="flex items-center gap-3 px-8 py-4 bg-indigo-600 hover:bg-indigo-500 text-white font-black rounded-xl text-[9px] uppercase tracking-widest transition-all shadow-xl active:scale-95"
+                    >
+                      <Download size={16} /> Export Protocol (.ztx)
+                    </button>
+                  </div>
+                  <div className="space-y-4">
+                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest leading-relaxed">
+                      Restore mission data from a local .ztx file. Integrity checks are applied automatically.
+                    </p>
+                    <label className="inline-flex items-center gap-3 px-8 py-4 bg-white/5 hover:bg-white/10 text-white font-black rounded-xl text-[9px] uppercase tracking-widest transition-all cursor-pointer border border-white/10 shadow-xl active:scale-95">
+                      <Upload size={16} /> Import Protocol (.ztx)
+                      <input type="file" accept=".ztx" onChange={handleImport} className="hidden" />
+                    </label>
+                  </div>
+               </div>
+            </div>
+
             <div className="glass rounded-[2rem] p-10 space-y-10 border border-white/10 shadow-2xl">
                <div className="flex items-center gap-3"><div className="p-2.5 bg-purple-500/10 text-purple-400 rounded-xl border border-purple-500/20"><Timer size={22} /></div><h2 className="text-base font-black text-white uppercase tracking-tighter">Timer Settings</h2></div>
                <div className="grid grid-cols-1 md:grid-cols-3 gap-10">
