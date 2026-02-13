@@ -1,10 +1,10 @@
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { 
   Trophy, Zap, Target, RotateCcw, Play, Rocket, Settings as SettingsIcon,
   Gamepad2, LogOut, X, Volume2, VolumeX, Github, Globe, User, EyeOff, Eye, 
   Activity, Dna, Clock, Lock, ShieldAlert, AlertCircle, Timer, Download, Upload, FileJson,
-  BookOpen, ChevronRight, Sparkles, ExternalLink, Info, HelpCircle
+  BookOpen, ChevronRight, Sparkles, ExternalLink, Info, HelpCircle, CheckCircle2
 } from 'lucide-react';
 import { Difficulty, GameMode, TypingResult, PlayerState, PowerUp, PowerUpType, AppView, AIProvider, UserProfile, UserPreferences, PomodoroSettings } from './types';
 import { fetchTypingText } from './services/geminiService';
@@ -53,6 +53,7 @@ const App: React.FC = () => {
   const [showRestrictedModal, setShowRestrictedModal] = useState(false);
   const [showGeminiError, setShowGeminiError] = useState(false);
   const [showGithubHelp, setShowGithubHelp] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [user, setUser] = useState<any>(null);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [isZen, setIsZen] = useState(false);
@@ -115,6 +116,7 @@ const App: React.FC = () => {
   const typewriterRef = useRef<number | null>(null);
   const requestCounter = useRef(0);
   const audioCtx = useRef<AudioContext | null>(null);
+  const saveTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -128,21 +130,60 @@ const App: React.FC = () => {
     localStorage.setItem('pomodoro_settings', JSON.stringify(pomodoroSettings));
   }, [pomodoroSettings]);
 
+  // Unified Sync Effect with Debouncing
   useEffect(() => {
     if (user) {
-      const prefs: UserPreferences = { 
-        ai_provider: provider, 
-        github_token: githubToken, 
-        user_profile: profile,
-        pomodoro_settings: pomodoroSettings,
-        ai_opponent_count: aiOpponentCount,
-        ai_opponent_difficulty: aiOpponentDifficulty,
-        calibrated_keys: Array.from(calibratedKeys),
-        key_mappings: keyMappings
-      };
-      saveUserPreferences(user.id, prefs).catch(err => console.error("Cloud save failed:", err));
+      if (saveTimeoutRef.current) window.clearTimeout(saveTimeoutRef.current);
+      
+      setSaveStatus('saving');
+      saveTimeoutRef.current = window.setTimeout(async () => {
+        try {
+          const prefs: UserPreferences = { 
+            ai_provider: provider, 
+            github_token: githubToken, 
+            user_profile: profile,
+            pomodoro_settings: pomodoroSettings,
+            ai_opponent_count: aiOpponentCount,
+            ai_opponent_difficulty: aiOpponentDifficulty,
+            calibrated_keys: Array.from(calibratedKeys),
+            key_mappings: keyMappings
+          };
+          await saveUserPreferences(user.id, prefs);
+          setSaveStatus('saved');
+          setTimeout(() => setSaveStatus('idle'), 2000);
+        } catch (err) {
+          console.error("Cloud save failed:", err);
+          setSaveStatus('error');
+        }
+      }, 1000);
     }
+    
+    // Also save to localStorage as local backup
+    localStorage.setItem('ai_provider', provider);
+    localStorage.setItem('github_token', githubToken);
   }, [profile, pomodoroSettings, provider, githubToken, user, aiOpponentCount, aiOpponentDifficulty, calibratedKeys, keyMappings]);
+
+  // State reset function memoized to be safe for inclusion in useEffect
+  const resetGameStats = useCallback(() => {
+    setUserInput(""); setElapsedTime(0); setTimeLeft(60); setErrors(0); setTotalKeys(0);
+    setCorrectKeys(0); setStreak(0); setStartTime(null);
+    setPowerUps([]); setIsFrozen(false); setIsSlowed(false); setErrorMap({});
+    const pb = localStorage.getItem(`pb_${difficulty}_${gameMode}`);
+    
+    // Always use latest profile values here
+    const initialPlayers: PlayerState[] = [{ id: 'me', name: profile.username, index: 0, errors: 0, isBot: false, avatar: profile.avatar }];
+    if (pb) initialPlayers.push({ id: 'ghost', name: 'Personal Best', index: 0, errors: 0, isBot: false, isGhost: true, avatar: '👻' });
+    
+    if (gameMode === GameMode.COMPETITIVE) {
+      const bots = [{ name: 'Alex', avatar: '🤖' }, { name: 'Jordan', avatar: '😎' }, { name: 'Riley', avatar: '🦊' }, { name: 'Sam', avatar: '🤖' }, { name: 'Casey', avatar: '🤖' }];
+      for (let i = 0; i < aiOpponentCount; i++) {
+        initialPlayers.push({ id: `bot${i+1}`, name: bots[i % bots.length].name, avatar: bots[i % bots.length].avatar, index: 0, errors: 0, isBot: true });
+      }
+    } else if (gameMode !== GameMode.SOLO) {
+      initialPlayers.push({ id: 'bot1', name: 'Bot One', avatar: '🤖', isBot: true, index: 0, errors: 0 });
+    }
+    setPlayers(initialPlayers);
+  }, [profile, difficulty, gameMode, aiOpponentCount]);
 
   useEffect(() => {
     const initializeAuth = async () => {
@@ -165,11 +206,11 @@ const App: React.FC = () => {
               setProvider(prefs.ai_provider);
               setGithubToken(prefs.github_token);
               setProfile(prefs.user_profile);
-              setPomodoroSettings(prefs.pomodoro_settings || { enabled: true, defaultMinutes: 25, size: 'medium' });
+              setPomodoroSettings(prefs.pomodoro_settings);
               setAiOpponentCount(prefs.ai_opponent_count);
               setAiOpponentDifficulty(prefs.ai_opponent_difficulty);
               setCalibratedKeys(new Set(prefs.calibrated_keys));
-              setKeyMappings(prefs.key_mappings || {});
+              setKeyMappings(prefs.key_mappings);
             }
             fetchHistory(newUser.id);
             setHasUsedSolo(null); 
@@ -190,6 +231,16 @@ const App: React.FC = () => {
     };
     initializeAuth();
   }, []);
+
+  // Sync track name with profile when profile changes (without resetting the whole game)
+  useEffect(() => {
+    setPlayers(prev => prev.map(p => {
+      if (p.id === 'me') {
+        return { ...p, name: profile.username, avatar: profile.avatar };
+      }
+      return p;
+    }));
+  }, [profile.username, profile.avatar]);
 
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
@@ -272,7 +323,7 @@ const App: React.FC = () => {
       }, 100);
     }
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [isActive, startTime, isFrozen, isSlowed, gameMode, loading, isTypingOut, aiOpponentDifficulty, currentText.length]);
+  }, [isActive, startTime, isFrozen, isSlowed, gameMode, loading, isTypingOut, aiOpponentDifficulty, currentText.length, difficulty]);
 
   const runTypewriter = (text: string) => {
     setIsTypingOut(true); setDisplayedText(""); let i = 0;
@@ -314,47 +365,14 @@ const App: React.FC = () => {
     }
   };
 
-  const resetGameStats = () => {
-    setUserInput(""); setElapsedTime(0); setTimeLeft(60); setErrors(0); setTotalKeys(0);
-    setCorrectKeys(0); setStreak(0); setStartTime(null);
-    setPowerUps([]); setIsFrozen(false); setIsSlowed(false); setErrorMap({});
-    const pb = localStorage.getItem(`pb_${difficulty}_${gameMode}`);
-    const initialPlayers: PlayerState[] = [{ id: 'me', name: profile.username, index: 0, errors: 0, isBot: false, avatar: profile.avatar }];
-    if (pb) initialPlayers.push({ id: 'ghost', name: 'Personal Best', index: 0, errors: 0, isBot: false, isGhost: true, avatar: '👻' });
-    
-    if (gameMode === GameMode.COMPETITIVE) {
-      const bots = [
-        { name: 'Alex', avatar: '🤖' }, 
-        { name: 'Jordan', avatar: '😎' }, 
-        { name: 'Riley', avatar: '🦊' },
-        { name: 'Sam', avatar: '🤖' },
-        { name: 'Casey', avatar: '🤖' }
-      ];
-      for (let i = 0; i < aiOpponentCount; i++) {
-        initialPlayers.push({ id: `bot${i+1}`, name: bots[i % bots.length].name, avatar: bots[i % bots.length].avatar, index: 0, errors: 0, isBot: true });
-      }
-    } else if (gameMode !== GameMode.SOLO) {
-      initialPlayers.push({ id: 'bot1', name: 'Bot One', avatar: '🤖', isBot: true, index: 0, errors: 0 });
-    }
-    setPlayers(initialPlayers);
-  };
-
-  useEffect(() => { resetGameStats(); }, []);
+  useEffect(() => { resetGameStats(); }, [resetGameStats]);
 
   const startGame = async () => {
     if (!user) {
       const used = await checkIpSoloUsage();
-      if (used) {
-        setHasUsedSolo(true);
-        setShowRestrictedModal(true);
-        return;
-      }
-      if (gameMode !== GameMode.SOLO) {
-        setShowRestrictedModal(true);
-        return;
-      }
+      if (used) { setHasUsedSolo(true); setShowRestrictedModal(true); return; }
+      if (gameMode !== GameMode.SOLO) { setShowRestrictedModal(true); return; }
     }
-
     playSound('click'); resetGameStats(); setIsActive(true); loadNewText(); 
     setTimeout(() => inputRef.current?.focus(), 50); 
   };
@@ -398,10 +416,7 @@ const App: React.FC = () => {
       await supabase.from('history').insert([{ ...result, user_id: user.id }]);
       setHistory(prev => [result, ...prev].slice(0, 50));
     } else if (gameMode === GameMode.SOLO) {
-      try {
-        await recordIpSoloUsage();
-        setHasUsedSolo(true);
-      } catch (err) {}
+      try { await recordIpSoloUsage(); setHasUsedSolo(true); } catch (err) {}
     }
     setCurrentText(""); setDisplayedText(""); setUserInput("");
   };
@@ -531,8 +546,18 @@ const App: React.FC = () => {
           <div className="space-y-8 animate-in zoom-in-95 duration-300">
             <div className="glass rounded-[2rem] p-10 border border-white/10 shadow-2xl"><KeyboardTester testedKeys={calibratedKeys} onTestedKeysChange={setCalibratedKeys} mappings={keyMappings} onMappingChange={setKeyMappings} /></div>
             
-            {/* GitHub Token Setup Help */}
-            <div className="glass rounded-[2rem] p-10 space-y-10 border border-white/10 shadow-2xl">
+            <div className="glass rounded-[2rem] p-10 space-y-10 border border-white/10 shadow-2xl relative">
+               {/* Save Status Floating Indicator */}
+               {saveStatus !== 'idle' && (
+                  <div className={`absolute top-10 right-10 flex items-center gap-2 px-3 py-1.5 rounded-full text-[8px] font-black uppercase tracking-widest animate-in fade-in slide-in-from-right-2
+                    ${saveStatus === 'saving' ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20' : 
+                      saveStatus === 'saved' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 
+                      'bg-rose-500/10 text-rose-400 border border-rose-500/20'}`}>
+                    {saveStatus === 'saving' ? <Activity size={12} className="animate-spin" /> : saveStatus === 'saved' ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
+                    {saveStatus === 'saving' ? 'Syncing...' : saveStatus === 'saved' ? 'Synced' : 'Sync Error'}
+                  </div>
+               )}
+
                <div className="flex items-center justify-between">
                  <div className="flex items-center gap-3"><div className="p-2.5 bg-indigo-500/10 text-indigo-400 rounded-xl border border-indigo-500/20"><Globe size={22} /></div><h2 className="text-base font-black text-white uppercase tracking-tighter">Advanced AI Config</h2></div>
                  <button onClick={() => setShowGithubHelp(!showGithubHelp)} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-indigo-400 text-[9px] font-black uppercase tracking-widest rounded-lg border border-white/5 transition-all">
@@ -543,21 +568,35 @@ const App: React.FC = () => {
                {showGithubHelp && (
                  <div className="p-6 bg-indigo-500/5 border border-indigo-500/20 rounded-2xl space-y-4 animate-in fade-in slide-in-from-top-2">
                     <h4 className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.2em] flex items-center gap-2"><Info size={14}/> GitHub Models Integration (ChatGPT Fallback)</h4>
-                    <ol className="space-y-3 text-[11px] text-slate-400 font-medium list-decimal list-inside leading-relaxed">
-                      <li>Go to <a href="https://github.com/settings/tokens" target="_blank" className="text-indigo-400 hover:underline inline-flex items-center gap-1">GitHub Developer Settings <ExternalLink size={10}/></a></li>
-                      <li>Select <strong>Personal access tokens</strong> &gt; <strong>Fine-grained tokens</strong>.</li>
-                      <li>Click <strong>Generate new token</strong>.</li>
-                      <li>In the <span className="text-white">Permissions</span> section, search for <span className="text-indigo-400 font-bold uppercase">Models</span>.</li>
-                      <li><span className="text-amber-400 underline">Crucial:</span> Enable the <strong>Models</strong> permission (read-only is sufficient).</li>
-                      <li>Copy the generated token and paste it below.</li>
-                    </ol>
+                    <p className="text-[11px] text-slate-400 font-medium leading-relaxed">Your GitHub Token is stored using <strong>AES-GCM encryption</strong>. It is only accessible to you and decrypted locally in your browser session.</p>
+                    
+                    <div className="flex flex-col gap-6">
+                      <div className="flex items-center justify-between p-4 bg-black/40 rounded-xl border border-white/5">
+                        <div className="space-y-1">
+                          <p className="text-[10px] font-black text-white uppercase tracking-widest">Step 0: Account Access</p>
+                          <p className="text-[9px] text-slate-500 font-medium">Login or sign up to GitHub to generate tokens.</p>
+                        </div>
+                        <a href="https://github.com/signup" target="_blank" className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white text-[9px] font-black uppercase tracking-widest rounded-lg border border-white/10 transition-all flex items-center gap-2">
+                          <Github size={12}/> Sign In / Sign Up
+                        </a>
+                      </div>
+
+                      <ol className="space-y-3 text-[11px] text-slate-400 font-medium list-decimal list-inside leading-relaxed px-2">
+                        <li>Go to <a href="https://github.com/settings/personal-access-tokens" target="_blank" className="text-indigo-400 hover:underline inline-flex items-center gap-1">GitHub Personal Access Tokens <ExternalLink size={10}/></a></li>
+                        <li>Select <strong>Fine-grained tokens</strong> &gt; <strong>Generate new token</strong>.</li>
+                        <li>Set a name and expiration for your token.</li>
+                        <li>In the <span className="text-white">Permissions</span> section, search for <span className="text-indigo-400 font-bold uppercase">Models</span>.</li>
+                        <li><span className="text-amber-400 underline">Crucial:</span> Enable the <strong>Models</strong> permission (read-only is sufficient).</li>
+                        <li>Generate, copy the token, and paste it into the input field below.</li>
+                      </ol>
+                    </div>
                  </div>
                )}
 
                <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
                 <div className="space-y-6">
                   <div className="space-y-3"><label className="text-[9px] font-black uppercase text-slate-500 tracking-[0.3em]">Text Generator</label><div className="flex bg-black/50 p-1.5 rounded-xl border border-white/5 shadow-inner"><button onClick={() => setProvider(AIProvider.GEMINI)} className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-lg text-[8px] font-black uppercase tracking-widest transition-all ${provider === AIProvider.GEMINI ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}><Globe size={12}/> Gemini</button><button onClick={() => setProvider(AIProvider.GITHUB)} className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-lg text-[8px] font-black uppercase tracking-widest transition-all ${provider === AIProvider.GITHUB ? 'bg-white/10 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}><Github size={12}/> GPT-4o (GitHub)</button></div></div>
-                  {provider === AIProvider.GITHUB && (<div className="space-y-3"><label className="text-[9px] font-black uppercase text-slate-500 tracking-[0.3em]">Access Token</label><input type="password" value={githubToken} onChange={e => setGithubToken(e.target.value)} placeholder="ghp_..." className="w-full bg-slate-950 border border-white/10 rounded-xl p-4 text-white font-mono text-xs outline-none focus:border-indigo-500 transition-all shadow-inner" /></div>)}
+                  {provider === AIProvider.GITHUB && (<div className="space-y-3"><label className="text-[9px] font-black uppercase text-slate-500 tracking-[0.3em]">Encrypted Access Token</label><input type="password" value={githubToken} onChange={e => setGithubToken(e.target.value)} placeholder="ghp_..." className="w-full bg-slate-950 border border-white/10 rounded-xl p-4 text-white font-mono text-xs outline-none focus:border-indigo-500 transition-all shadow-inner" /></div>)}
                 </div>
                 <div className="space-y-8"><div className="space-y-3"><label className="text-[9px] font-black uppercase text-slate-500 tracking-[0.3em]">AI Competitors (1-5)</label><div className="flex items-center px-1"><input type="range" min="1" max="5" value={aiOpponentCount} onChange={e => setAiOpponentCount(parseInt(e.target.value))} className="flex-1 accent-indigo-500 h-2 bg-white/10 rounded-full appearance-none cursor-pointer" /></div></div><div className="space-y-3"><label className="text-[9px] font-black uppercase text-slate-500 tracking-[0.3em]">Bot Difficulty</label><div className="flex flex-wrap bg-black/50 p-1.5 rounded-xl border border-white/5 gap-2 shadow-inner">{[Difficulty.EASY, Difficulty.MEDIUM, Difficulty.HARD, Difficulty.PRO, Difficulty.INSANE].map(d => (<button key={d} onClick={() => setAiOpponentDifficulty(d)} className={`flex-1 py-3 px-2 rounded-lg text-[8px] font-black uppercase tracking-widest transition-all ${aiOpponentDifficulty === d ? 'bg-emerald-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>{d}</button>))}</div></div></div>
               </div>
@@ -621,18 +660,11 @@ const App: React.FC = () => {
                   <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-[0.02] pointer-events-none" />
                   {players.map(p => {
                     const progress = (p.index / Math.max(currentText.length, 1)) * 100;
-                    const isWinning = players.every(other => other.id === p.id || p.index >= other.index);
                     return (
                       <div key={p.id} className="relative h-16 bg-slate-900/60 rounded-2xl border border-white/5 overflow-hidden group shadow-[inset_0_4px_12px_rgba(0,0,0,0.6)]">
-                        {/* High-tech Track Markings */}
-                        <div className="absolute inset-0 opacity-[0.05] pointer-events-none flex justify-between px-2">
-                           {[...Array(10)].map((_, i) => <div key={i} className="w-px h-full bg-white" />)}
-                        </div>
-                        
-                        {/* Engine Glow & Progress Lane */}
                         <div 
                           className={`absolute inset-y-0 left-0 transition-all duration-700 cubic-bezier(0.23, 1, 0.32, 1) flex items-center justify-end
-                            ${p.isGhost ? 'bg-indigo-300/10 border-r border-white/30 shadow-[0_0_20px_rgba(165,180,252,0.1)]' : 
+                            ${p.isGhost ? 'bg-indigo-300/10 border-r border-white/30' : 
                               p.id === 'me' ? `bg-gradient-to-r ${ACCENT_COLORS[profile.accentColor as keyof typeof ACCENT_COLORS]} opacity-30 border-r-[3px] border-white shadow-[0_0_30px_var(--accent-glow)]` : 
                               'bg-indigo-500/10 border-r border-indigo-500/30'}`} 
                           style={{ width: `${progress}%` }}
@@ -642,12 +674,9 @@ const App: React.FC = () => {
                           )}
                         </div>
 
-                        {/* Player Car / Identity Content */}
                         <div className="absolute top-1/2 -translate-y-1/2 transition-all duration-700 cubic-bezier(0.23, 1, 0.32, 1) flex items-center gap-5 px-6" style={{ left: `${Math.min(progress, 88)}%` }}>
                           <div className={`relative flex items-center justify-center w-11 h-11 rounded-2xl bg-slate-950 border-2 transition-all duration-300 shadow-2xl ${p.id === 'me' ? 'scale-110 border-white ring-4 ring-indigo-500/20' : 'border-white/10'}`}>
                             <span className="text-2xl drop-shadow-glow">{p.avatar}</span>
-                            {p.id === 'me' && isOverdrive && <div className="absolute -inset-2 bg-indigo-500/20 rounded-full blur-xl animate-pulse" />}
-                            {isWinning && p.index > 5 && <div className="absolute -top-3 -right-3 p-1 bg-amber-500 text-white rounded-lg shadow-lg rotate-12 scale-90"><Trophy size={14} /></div>}
                           </div>
                           <div className="flex flex-col drop-shadow-md">
                             <span className={`text-[9px] font-black uppercase tracking-[0.2em] ${p.id === 'me' ? 'text-white' : 'text-slate-500'}`}>{p.name}</span>
@@ -660,7 +689,6 @@ const App: React.FC = () => {
                           </div>
                         </div>
 
-                        {/* Checkered Flag Finish Line */}
                         <div className="absolute right-0 inset-y-0 w-12 flex items-center justify-center opacity-30 border-l border-white/10" style={{ background: 'repeating-conic-gradient(#fff 0 90deg, #000 0 180deg) 0 0/10px 10px' }}>
                            <div className="w-1 h-2/3 bg-white/20 rounded-full blur-sm" />
                         </div>
@@ -681,13 +709,7 @@ const App: React.FC = () => {
                 <div className={`glass rounded-[2rem] p-10 min-h-[220px] flex items-center justify-center text-base md:text-xl font-mono leading-relaxed select-none transition-all duration-700 shadow-[inset_0_2px_15px_rgba(0,0,0,0.5)] ${isOverdrive ? 'ring-2 ring-indigo-500/30' : 'border border-white/10'}`}>
                   {loading ? (
                     <div className="flex flex-col items-center gap-6 py-4">
-                      <img 
-                        src="https://ewdrrhdsxjrhxyzgjokg.supabase.co/storage/v1/object/public/assets/loading.gif" 
-                        alt="Loading..." 
-                        className="w-[100px] h-[100px] object-contain" 
-                        onLoad={() => console.log("Asset Loaded")}
-                        onError={(e) => { (e.target as HTMLImageElement).src = "https://i.giphy.com/media/v1.Y2lkPTc5MGI3NjExNHJocmd0Z3o1bHpxeDN4ZHR4ZHR4ZHR4ZHR4ZHR4ZHR4ZHR4ZHR4JmVwPXYxX2ludGVybmFsX2dpZl9ieV9pZCZjdD1n/3o7bu3XilJ5BOiSGic/giphy.gif"; }}
-                      />
+                      <img src="https://ewdrrhdsxjrhxyzgjokg.supabase.co/storage/v1/object/public/assets/loading.gif" alt="Loading..." className="w-[100px] h-[100px] object-contain" />
                       <p className="text-[11px] font-black uppercase tracking-[0.6em] animate-pulse text-indigo-400">{loadingMsg}</p>
                     </div>
                   ) : !isActive ? (
@@ -705,12 +727,10 @@ const App: React.FC = () => {
                         </div>
                       )}
                     </div>
-                  ) : isTypingOut ? (
-                    <div className="w-full text-left opacity-20 text-slate-400">{displayedText}</div>
                   ) : (
                     <div className="w-full text-left font-medium drop-shadow-glow">
                       {currentText.split('').map((c, i) => (
-                        <span key={i} className={`transition-all duration-75 ${i < userInput.length ? (userInput[i] === c ? 'text-white/90 brightness-150 font-bold' : 'bg-rose-500/20 text-rose-500 rounded px-1.5 shadow-[0_0_10px_rgba(244,63,94,0.2)]') : i === userInput.length ? `text-white border-b-2 animate-pulse` : 'text-white/10'}`} 
+                        <span key={i} className={`transition-all duration-75 ${i < userInput.length ? (userInput[i] === c ? 'text-white/90 brightness-150 font-bold' : 'bg-rose-500/20 text-rose-500 rounded px-1.5') : i === userInput.length ? `text-white border-b-2 animate-pulse` : 'text-white/10'}`} 
                               style={{ borderBottomColor: i === userInput.length ? 'rgb(var(--accent-primary))' : 'transparent' }}>{c}</span>
                       ))}
                     </div>
@@ -719,21 +739,12 @@ const App: React.FC = () => {
                 <input ref={inputRef} value={userInput} onChange={handleInputChange} disabled={!isActive || loading || isTypingOut} className="absolute inset-0 opacity-0 cursor-default" autoFocus />
               </div>
 
-              {showGuide && isActive && !loading && !isTypingOut && (
-                <div className="mb-10 animate-in slide-in-from-top-4 duration-500">
-                   <TypingGuide nextChar={currentText[userInput.length]} accentColor={profile.accentColor} />
-                </div>
-              )}
+              {showGuide && isActive && !loading && !isTypingOut && <div className="mb-10 animate-in slide-in-from-top-4 duration-500"><TypingGuide nextChar={currentText[userInput.length]} accentColor={profile.accentColor} /></div>}
 
               <div className="mt-4 flex flex-col items-center">
-                <button 
-                  onClick={isActive ? () => setIsActive(false) : startGame} 
-                  className={`group relative px-12 py-5 rounded-[1.5rem] font-black uppercase tracking-[0.4em] text-[11px] transition-all shadow-3xl overflow-hidden hover:scale-105 active:scale-95 ${isActive ? 'bg-white/5 text-slate-500 border border-white/10' : `text-white bg-gradient-to-r ${ACCENT_COLORS[profile.accentColor as keyof typeof ACCENT_COLORS]} ring-4 ring-indigo-500/20`}`}>
+                <button onClick={isActive ? () => setIsActive(false) : startGame} className={`group relative px-12 py-5 rounded-[1.5rem] font-black uppercase tracking-[0.4em] text-[11px] transition-all shadow-3xl overflow-hidden hover:scale-105 active:scale-95 ${isActive ? 'bg-white/5 text-slate-500 border border-white/10' : `text-white bg-gradient-to-r ${ACCENT_COLORS[profile.accentColor as keyof typeof ACCENT_COLORS]} ring-4 ring-indigo-500/20`}`}>
                   <div className="absolute inset-0 bg-white/20 opacity-0 group-hover:opacity-30 transition-opacity" />
-                  <div className="relative flex items-center gap-3">
-                    {isActive ? <RotateCcw size={20} /> : <Play size={20} />} 
-                    {isActive ? 'Reset Race' : 'Execute Mission'}
-                  </div>
+                  <div className="relative flex items-center gap-3">{isActive ? <RotateCcw size={20} /> : <Play size={20} />} {isActive ? 'Reset Race' : 'Execute Mission'}</div>
                 </button>
               </div>
             </main>
@@ -771,7 +782,7 @@ const App: React.FC = () => {
           </>
         )}
       </div>
-      <footer className="mt-16 text-slate-800 text-[9px] font-black uppercase tracking-[0.6em] opacity-40 pb-12 text-center">ZippyType v3.9 • Tactical Academy Edition</footer>
+      <footer className="mt-16 text-slate-800 text-[9px] font-black uppercase tracking-[0.6em] opacity-40 pb-12 text-center">ZippyType v4.0 • Encrypted Tactical Academy</footer>
     </div>
   );
 };
