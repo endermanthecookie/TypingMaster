@@ -343,7 +343,7 @@ const App: React.FC = () => {
     const val = normalizeText(e.target.value);
     if (val.length < userInput.length) {
       setTotalKeys(prev => prev + 1); setUserInput(val);
-      setPlayers(prev => prev.map(p => p.id === 'me' ? { ...p, index: val.length } : p));
+      setPlayers(prev => prev.map(p => { if (p.id === 'me') return { ...p, index: val.length }; return p; }));
       return;
     }
     if (val === userInput) return;
@@ -354,8 +354,8 @@ const App: React.FC = () => {
         if (val[val.length - 1] === ' ') setStreak(s => { const ns = s + 1; if (ns % 8 === 0) awardPowerUp(); return ns; });
       }
       setUserInput(val);
-      setPlayers(prev => prev.map(p => p.id === 'me' ? { ...p, index: val.length } : p));
-      if (val.length === currentText.length) { if (gameMode === GameMode.TIME_ATTACK) { loadNewText(); setUserInput(""); setPlayers(ps => ps.map(p => p.id === 'me' ? {...p, index: 0} : p)); } else completeRace(); }
+      setPlayers(prev => prev.map(p => { if (p.id === 'me') return { ...p, index: val.length }; return p; }));
+      if (val.length === currentText.length) { if (gameMode === GameMode.TIME_ATTACK) { loadNewText(); setUserInput(""); setPlayers(ps => ps.map(p => { if (p.id === 'me') return {...p, index: 0}; return p; })); } else completeRace(); }
     } else {
       playSound('error'); setErrors(prev => prev + 1); setStreak(0);
       const lastChar = val[val.length - 1].toLowerCase();
@@ -401,7 +401,7 @@ const App: React.FC = () => {
     setPowerUps(p => p.filter((_, i) => i !== idx)); playSound('click');
     if (type === PowerUpType.SKIP_WORD) {
       const rem = currentText.substring(userInput.length); const nextSpace = rem.indexOf(' '); const skip = nextSpace === -1 ? rem.length : nextSpace + 1;
-      const nt = currentText.substring(0, Math.min(userInput.length + skip, currentText.length)); setUserInput(nt); setPlayers(ps => ps.map(p => p.id === 'me' ? {...p, index: nt.length} : p));
+      const nt = currentText.substring(0, Math.min(userInput.length + skip, currentText.length)); setUserInput(nt); setPlayers(ps => ps.map(p => { if (p.id === 'me') return {...p, index: nt.length}; return p; }));
     } else if (type === PowerUpType.TIME_FREEZE) { setIsFrozen(true); setTimeout(() => setIsFrozen(false), 3000); }
     else if (type === PowerUpType.SLOW_OPPONENTS) { setIsSlowed(true); setTimeout(() => setIsSlowed(false), 5000); }
   };
@@ -438,7 +438,7 @@ const App: React.FC = () => {
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 flex items-center justify-center border border-white/10 shadow-inner"><Rocket style={{ color: 'rgb(var(--accent-primary))' }} size={24} /></div>
             <div>
-              <h1 className="text-base font-black text-white uppercase tracking-tighter leading-none mb-1">Typing Master</h1>
+              <h1 className="text-base font-black text-white uppercase tracking-tighter leading-none mb-1">ZippyType</h1>
               <div className="flex items-center gap-2">
                 <span className="text-[9px] font-black uppercase text-slate-500 tracking-[0.2em]">USER:</span>
                 <span className="text-[9px] font-black uppercase tracking-[0.2em] text-indigo-400">{profile.username}</span>
@@ -637,7 +637,7 @@ const App: React.FC = () => {
           </>
         )}
       </div>
-      <footer className="mt-16 text-slate-800 text-[9px] font-black uppercase tracking-[0.6em] opacity-40 pb-12 text-center">Typing Master v3.7 • Professional Edition</footer>
+      <footer className="mt-16 text-slate-800 text-[9px] font-black uppercase tracking-[0.6em] opacity-40 pb-12 text-center">ZippyType v3.7 • Professional Edition</footer>
     </div>
   );
 };
