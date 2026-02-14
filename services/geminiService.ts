@@ -2,17 +2,28 @@
 import { GoogleGenAI } from "@google/genai";
 import { Difficulty } from "../types";
 
-export const fetchTypingText = async (difficulty: Difficulty, category: string = "General", seed?: string): Promise<string> => {
-  const theme = category === "General" 
-    ? "fascinating trivia, general knowledge, science facts, or life philosophy" 
-    : category;
+export const fetchTypingText = async (
+  difficulty: Difficulty, 
+  category: string = "General", 
+  seed?: string,
+  problemKeys: string[] = []
+): Promise<string> => {
+  const drillContext = problemKeys.length > 0 
+    ? `IMPORTANT: This is a neuro-adaptive drill. The user is struggling with these keys: [${problemKeys.join(', ')}]. 
+       Ensure the generated text contains an abnormally high frequency of these specific characters to help them practice.`
+    : "";
+
+  const theme = category !== "General" ? category : "fascinating trivia or life philosophy";
 
   const prompt = `Generate a single ${difficulty} level typing practice sentence about "${theme}". 
-  ${seed ? `Base the content loosely on the concept of: ${seed}.` : ''}
+  ${seed ? `Base the content loosely on: ${seed}.` : ''}
+  ${drillContext}
+  
+  Constraints:
   - Easy: Short, simple words, no complex punctuation. (10-15 words)
   - Medium: Moderate length, some common punctuation. (20-30 words)
-  - Hard: Longer, complex vocabulary, advanced punctuation, and technical terms. (40-60 words)
-  Return ONLY the sentence text, no quotes, no labels, and no surrounding whitespace.`;
+  - Hard: Longer, complex vocabulary, advanced punctuation. (40-60 words)
+  - Return ONLY the sentence text. No quotes. No extra labels.`;
 
   try {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -28,7 +39,6 @@ export const fetchTypingText = async (difficulty: Difficulty, category: string =
     return response.text.trim();
   } catch (error) {
     console.error("Gemini Core Error:", error);
-    // Let the component handle the error to show the fallback modal
     throw error;
   }
 };
